@@ -2,24 +2,32 @@ import 'package:flutter/material.dart';
 import 'package:firebase_core/firebase_core.dart';
 import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:firebase_auth/firebase_auth.dart';
-
-import 'firebase_options.dart';
+import 'package:flutter/gestures.dart';
 
 void main() async {
   WidgetsFlutterBinding.ensureInitialized();
-  await Firebase.initializeApp(options: firebaseOptions);
+  await Firebase.initializeApp(
+    options: const FirebaseOptions(
+      apiKey: "YOUR_API_KEY",
+      authDomain: "YOUR_PROJECT.firebaseapp.com",
+      projectId: "YOUR_PROJECT_ID",
+      storageBucket: "YOUR_PROJECT.appspot.com",
+      messagingSenderId: "SENDER_ID",
+      appId: "APP_ID",
+    ),
+  );
+
   await FirebaseAuth.instance.signInAnonymously();
-  runApp(const ChatApp());
+  runApp(const MyApp());
 }
 
-class ChatApp extends StatelessWidget {
-  const ChatApp({super.key});
+class MyApp extends StatelessWidget {
+  const MyApp({super.key});
 
   @override
   Widget build(BuildContext context) {
     return MaterialApp(
       debugShowCheckedModeBanner: false,
-      title: 'Neon Chat',
       theme: ThemeData.dark(),
       home: const ChatScreen(),
     );
@@ -33,45 +41,25 @@ class ChatScreen extends StatefulWidget {
   State<ChatScreen> createState() => _ChatScreenState();
 }
 
-class _ChatScreenState extends State<ChatScreen>
-    with WidgetsBindingObserver {
-  final messagesRef =
-      FirebaseFirestore.instance.collection('messages');
-  final usersRef =
-      FirebaseFirestore.instance.collection('users');
+class _ChatScreenState extends State<ChatScreen> {
+  final messagesRef = FirebaseFirestore.instance.collection('messages');
+  final usersRef = FirebaseFirestore.instance.collection('users');
 
-  final TextEditingController controller = TextEditingController();
-  final FocusNode inputFocusNode = FocusNode();
+  final TextEditingController _controller = TextEditingController();
+  final FocusNode _focusNode = FocusNode();
+  final ScrollController _scrollController = ScrollController();
 
+  bool autoScrollEnabled = true;
   String? username;
 
   @override
   void initState() {
     super.initState();
-    WidgetsBinding.instance.addObserver(this);
     setupUser();
   }
 
-  @override
-  void dispose() {
-    WidgetsBinding.instance.removeObserver(this);
-    controller.dispose();
-    inputFocusNode.dispose();
-    super.dispose();
-  }
+  // ---------------- USER SETUP ----------------
 
-  // 🔄 Online / Offline handling
-  @override
-  void didChangeAppLifecycleState(AppLifecycleState state) {
-    if (state == AppLifecycleState.detached ||
-        state == AppLifecycleState.inactive) {
-      setOnline(false);
-    } else if (state == AppLifecycleState.resumed) {
-      setOnline(true);
-    }
-  }
-
-  // 👤 USER SETUP
   Future<void> setupUser() async {
     final user = FirebaseAuth.instance.currentUser!;
     final doc = await usersRef.doc(user.uid).get();
@@ -80,7 +68,7 @@ class _ChatScreenState extends State<ChatScreen>
       await askUsername();
     } else {
       username = doc['username'];
-      setOnline(true);
+      setOnlineStatus(true);
     }
   }
 
@@ -91,20 +79,14 @@ class _ChatScreenState extends State<ChatScreen>
       context: context,
       barrierDismissible: false,
       builder: (_) => AlertDialog(
-        title: const Text('Choose a username'),
-        content: TextField(
-          controller: nameCtrl,
-          decoration: const InputDecoration(
-            hintText: 'Your name',
-          ),
-        ),
+        title: const Text("Choose username"),
+        content: TextField(controller: nameCtrl),
         actions: [
           TextButton(
             onPressed: () async {
               if (nameCtrl.text.trim().isEmpty) return;
 
-              final user =
-                  FirebaseAuth.instance.currentUser!;
+              final user = FirebaseAuth.instance.currentUser!;
               username = nameCtrl.text.trim();
 
               await usersRef.doc(user.uid).set({
@@ -115,14 +97,14 @@ class _ChatScreenState extends State<ChatScreen>
 
               Navigator.pop(context);
             },
-            child: const Text('Join'),
-          ),
+            child: const Text("Join"),
+          )
         ],
       ),
     );
   }
 
-  Future<void> setOnline(bool online) async {
+  Future<void> setOnlineStatus(bool online) async {
     final user = FirebaseAuth.instance.currentUser!;
     await usersRef.doc(user.uid).update({
       'online': online,
@@ -130,71 +112,97 @@ class _ChatScreenState extends State<ChatScreen>
     });
   }
 
-  // 💬 SEND MESSAGE
-  void sendMessage() {
-    final text = controller.text.trim();
-    if (text.isEmpty || username == null) return;
+  // ---------------- MESSAGE ----------------
 
-    messagesRef.add({
+  void sendMessage() async {
+    final text = _controller.text.trim();
+    if (text.isEmpty) return;
+
+    await messagesRef.add({
       'text': text,
       'username': username,
-      'uid': FirebaseAuth.instance.currentUser!.uid,
       'createdAt': FieldValue.serverTimestamp(),
     });
 
-    controller.clear();
-    inputFocusNode.requestFocus();
+    _controller.clear();
+    _focusNode.requestFocus();
+  }
+
+  // ---------------- AUTO SCROLL ----------------
+
+  void scrollToBottom() {
+    if (!_scrollController.hasClients) return;
+
+    _scrollController.animateTo(
+      _scrollController.position.maxScrollExtent,
+      duration: const Duration(milliseconds: 300),
+      curve: Curves.easeOut,
+    );
   }
 
   @override
-  Widget build(BuildContext context) {
-    final myUid = FirebaseAuth.instance.currentUser!.uid;
+  void dispose() {
+    _scrollController.dispose();
+    _controller.dispose();
+    _focusNode.dispose();
+    super.dispose();
+  }
 
+  // ---------------- UI ----------------
+
+  @override
+  Widget build(BuildContext context) {
     return Scaffold(
       appBar: AppBar(
-        title: const Text('Neon Chat'),
-        centerTitle: true,
+        title: const Text("Neon Chat"),
+        backgroundColor: Colors.black,
+        actions: [
+          IconButton(
+            icon: Icon(
+              autoScrollEnabled ? Icons.arrow_downward : Icons.pause,
+              color: autoScrollEnabled ? Colors.greenAccent : Colors.grey,
+            ),
+            tooltip: autoScrollEnabled
+                ? "Auto-scroll ON"
+                : "Auto-scroll OFF",
+            onPressed: () {
+              setState(() => autoScrollEnabled = !autoScrollEnabled);
+            },
+          )
+        ],
       ),
       body: Row(
         children: [
-          // 👥 LEFT SIDEBAR (USERS)
+          // -------- LEFT SIDEBAR --------
           Container(
             width: 220,
             color: Colors.black87,
             child: StreamBuilder<QuerySnapshot>(
               stream: usersRef.snapshots(),
               builder: (context, snapshot) {
-                if (!snapshot.hasData) {
-                  return const SizedBox();
-                }
-
-                final users = snapshot.data!.docs;
+                if (!snapshot.hasData) return const SizedBox();
 
                 return ListView(
-                  children: users.map((doc) {
-                    final data =
-                        doc.data() as Map<String, dynamic>;
-                    final isOnline = data['online'] == true;
+                  children: snapshot.data!.docs.map((doc) {
+                    final data = doc.data() as Map<String, dynamic>;
+                    final online = data['online'] == true;
 
                     return ListTile(
                       leading: Icon(
                         Icons.circle,
-                        size: 12,
-                        color: isOnline
-                            ? Colors.greenAccent
-                            : Colors.grey,
+                        size: 10,
+                        color: online ? Colors.greenAccent : Colors.grey,
                       ),
                       title: Text(
                         data['username'],
                         style: const TextStyle(color: Colors.white),
                       ),
                       subtitle: Text(
-                        isOnline ? 'Online' : 'Offline',
+                        online ? "Online" : "Offline",
                         style: TextStyle(
-                          color: isOnline
-                              ? Colors.greenAccent
-                              : Colors.grey,
                           fontSize: 12,
+                          color:
+                              online ? Colors.greenAccent : Colors.grey,
                         ),
                       ),
                     );
@@ -204,11 +212,11 @@ class _ChatScreenState extends State<ChatScreen>
             ),
           ),
 
-          // 💬 CHAT AREA
+          // -------- CHAT AREA --------
           Expanded(
             child: Column(
               children: [
-                // Messages
+                // MESSAGES
                 Expanded(
                   child: StreamBuilder<QuerySnapshot>(
                     stream: messagesRef
@@ -220,72 +228,60 @@ class _ChatScreenState extends State<ChatScreen>
                             child: CircularProgressIndicator());
                       }
 
-                      final docs = snapshot.data!.docs;
+                      WidgetsBinding.instance.addPostFrameCallback((_) {
+                        if (autoScrollEnabled) scrollToBottom();
+                      });
 
-                      return ListView.builder(
-                        padding: const EdgeInsets.all(12),
-                        itemCount: docs.length,
-                        itemBuilder: (context, index) {
-                          final data =
-                              docs[index].data()
-                                  as Map<String, dynamic>;
-                          final isMe = data['uid'] == myUid;
+                      final messages = snapshot.data!.docs;
 
-                          return Align(
-                            alignment: isMe
-                                ? Alignment.centerRight
-                                : Alignment.centerLeft,
-                            child: Container(
-                              margin:
-                                  const EdgeInsets.only(bottom: 8),
-                              padding: const EdgeInsets.symmetric(
-                                  vertical: 10, horizontal: 14),
-                              decoration: BoxDecoration(
-                                color: isMe
-                                    ? Colors.greenAccent
-                                        .withOpacity(0.2)
-                                    : Colors.white10,
-                                borderRadius:
-                                    BorderRadius.circular(16),
-                              ),
+                      return NotificationListener<UserScrollNotification>(
+                        onNotification: (notification) {
+                          if (notification.direction ==
+                              ScrollDirection.forward) {
+                            setState(() => autoScrollEnabled = false);
+                          }
+                          return false;
+                        },
+                        child: ListView.builder(
+                          controller: _scrollController,
+                          padding: const EdgeInsets.all(8),
+                          itemCount: messages.length,
+                          itemBuilder: (context, index) {
+                            final data = messages[index].data()
+                                as Map<String, dynamic>;
+
+                            return Padding(
+                              padding:
+                                  const EdgeInsets.symmetric(vertical: 4),
                               child: Text(
                                 "${data['username']}: ${data['text']}",
-                                style:
-                                    const TextStyle(fontSize: 16),
+                                style: const TextStyle(
+                                  color: Colors.greenAccent,
+                                  fontSize: 16,
+                                ),
                               ),
-                            ),
-                          );
-                        },
+                            );
+                          },
+                        ),
                       );
                     },
                   ),
                 ),
 
-                // Input
+                // INPUT
                 Container(
                   padding: const EdgeInsets.all(8),
                   color: Colors.black,
-                  child: Row(
-                    children: [
-                      Expanded(
-                        child: TextField(
-                          controller: controller,
-                          focusNode: inputFocusNode,
-                          textInputAction:
-                              TextInputAction.send,
-                          onSubmitted: (_) => sendMessage(),
-                          decoration:
-                              const InputDecoration(
-                            hintText: 'Type message...',
-                            border: InputBorder.none,
-                          ),
-                        ),
-                      ),
-                      IconButton(
-                        icon: const Icon(Icons.send),
-                        onPressed: sendMessage,
-                      ),
-                    ],
+                  child: TextField(
+                    controller: _controller,
+                    focusNode: _focusNode,
+                    style: const TextStyle(color: Colors.greenAccent),
+                    decoration: const InputDecoration(
+                      hintText: "Type a message...",
+                      hintStyle: TextStyle(color: Colors.greenAccent),
+                      border: OutlineInputBorder(),
+                    ),
+                    onSubmitted: (_) => sendMessage(),
                   ),
                 ),
               ],
