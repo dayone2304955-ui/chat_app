@@ -65,9 +65,10 @@ class ChatScreen extends StatefulWidget {
 
 class _ChatScreenState extends State<ChatScreen>
     with WidgetsBindingObserver {
+  final DatabaseReference presenceRef =
+    FirebaseDatabase.instance.ref('status');
   final messagesRef = FirebaseFirestore.instance.collection('messages');
   final usersRef = FirebaseFirestore.instance.collection('users');
-
   final TextEditingController _controller = TextEditingController();
   final FocusNode _focusNode = FocusNode();
   final ScrollController _scrollController = ScrollController();
@@ -208,7 +209,6 @@ class _ChatScreenState extends State<ChatScreen>
       final data = event.snapshot.value as Map?;
       if (data == null) return;
       await usersRef.doc(uid).update({
-        'online': data['online'],
         'lastSeen': FieldValue.serverTimestamp(),
       });
     });
@@ -389,59 +389,64 @@ class _ChatScreenState extends State<ChatScreen>
                     SizedBox(
                       width: 220,
                       child: glassPanel(
-                        child: StreamBuilder<QuerySnapshot>(
-                          stream: usersRef
-                            .where('lastSeen',
-                                isGreaterThan: Timestamp.fromDate(
-                                  DateTime.now().subtract(const Duration(minutes: 10)),
-                                ))
-                            .snapshots(),
-                          builder: (_, snap) {
-                            if (!snap.hasData) return const SizedBox();
-                            return ListView(
-                              padding: const EdgeInsets.all(10),
-                              children: snap.data!.docs.map((doc) {
-                                final data = doc.data() as Map<String, dynamic>;                                
-                                final bool online = data['online'] == true;
-                                final Timestamp? lastSeenTs = data['lastSeen'] as Timestamp?;
-                                final DateTime now = DateTime.now();
-                                
-                                String statusText;
+                        child: StreamBuilder<DatabaseEvent>(
+                          stream: presenceRef.onValue,
+                          builder: (_, presenceSnap) {
+                            if (!presenceSnap.hasData) return const SizedBox();
 
-                                if (online) {
-                                  statusText = "Online";
-                                } else if (lastSeenTs == null) {
-                                  statusText = "Offline";
-                                } else {
-                                  final diff = now.difference(lastSeenTs.toDate());
+                            final presenceData =
+                                presenceSnap.data!.snapshot.value as Map? ?? {};
 
-                                  if (diff.inMinutes < 1) {
-                                    statusText = "Last seen just now";
-                                  } else if (diff.inMinutes < 60) {
-                                    statusText = "Last seen ${diff.inMinutes} min ago";
-                                  } else if (diff.inHours < 24) {
-                                    statusText = "Last seen ${diff.inHours} h ago";
-                                  } else {
-                                    statusText = "Last seen ${diff.inDays} d ago";
-                                  }
-                                }
+                            return StreamBuilder<QuerySnapshot>(
+                              stream: usersRef.snapshots(),
+                              builder: (_, userSnap) {
+                                if (!userSnap.hasData) return const SizedBox();
 
+                                return ListView(
+                                  padding: const EdgeInsets.all(10),
+                                  children: userSnap.data!.docs.map((doc) {
+                                    final data = doc.data() as Map<String, dynamic>;
+                                    final uid = doc.id;
 
-                                return ListTile(
-                                  leading: Icon(
-                                    Icons.circle,
-                                    size: 10,
-                                    color: online
-                                        ? Colors.cyanAccent
-                                        : Colors.grey,
-                                  ),
-                                  title: Text(data['username'], style: sidebarName),
-                                  subtitle: Text(
-                                     statusText,
-                                    style: sidebarStatus,
-                                  ),
+                                    final status = presenceData[uid] as Map?;
+                                    final bool online = status?['online'] == true;
+
+                                    final Timestamp? lastSeenTs =
+                                        data['lastSeen'] as Timestamp?;
+                                    final DateTime now = DateTime.now();
+
+                                    String statusText;
+
+                                    if (online) {
+                                      statusText = "Online";
+                                    } else if (lastSeenTs == null) {
+                                      statusText = "Offline";
+                                    } else {
+                                      final diff = now.difference(lastSeenTs.toDate());
+
+                                      if (diff.inMinutes < 1) {
+                                        statusText = "Last seen just now";
+                                      } else if (diff.inMinutes < 60) {
+                                        statusText = "Last seen ${diff.inMinutes} min ago";
+                                      } else if (diff.inHours < 24) {
+                                        statusText = "Last seen ${diff.inHours} h ago";
+                                      } else {
+                                        statusText = "Last seen ${diff.inDays} d ago";
+                                      }
+                                    }
+
+                                    return ListTile(
+                                      leading: Icon(
+                                        Icons.circle,
+                                        size: 10,
+                                        color: online ? Colors.cyanAccent : Colors.grey,
+                                      ),
+                                      title: Text(data['username'], style: sidebarName),
+                                      subtitle: Text(statusText, style: sidebarStatus),
+                                    );
+                                  }).toList(),
                                 );
-                              }).toList(),
+                              },
                             );
                           },
                         ),
