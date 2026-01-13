@@ -1,10 +1,10 @@
 import 'dart:ui';
-import 'dart:async'; // ✅ ADDED
+import 'dart:async';
 import 'package:flutter/material.dart';
 import 'package:firebase_core/firebase_core.dart';
 import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:firebase_auth/firebase_auth.dart';
-import 'package:firebase_database/firebase_database.dart'; // ✅ ADDED
+import 'package:firebase_database/firebase_database.dart';
 
 void main() async {
   WidgetsFlutterBinding.ensureInitialized();
@@ -412,7 +412,30 @@ class _ChatScreenState extends State<ChatScreen>
                               children: snap.data!.docs.map((doc) {
                                 final data = doc.data() as Map<String, dynamic>;                                
                                 final bool online = data['online'] == true;
+                                final Timestamp? lastSeenTs = data['lastSeen'] as Timestamp?;
+                                final DateTime now = DateTime.now();
                                 
+                                String statusText;
+
+                                if (online) {
+                                  statusText = "Online";
+                                } else if (lastSeenTs == null) {
+                                  statusText = "Offline";
+                                } else {
+                                  final diff = now.difference(lastSeenTs.toDate());
+
+                                  if (diff.inMinutes < 1) {
+                                    statusText = "Last seen just now";
+                                  } else if (diff.inMinutes < 60) {
+                                    statusText = "Last seen ${diff.inMinutes} min ago";
+                                  } else if (diff.inHours < 24) {
+                                    statusText = "Last seen ${diff.inHours} h ago";
+                                  } else {
+                                    statusText = "Last seen ${diff.inDays} d ago";
+                                  }
+                                }
+
+
                                 return ListTile(
                                   leading: Icon(
                                     Icons.circle,
@@ -423,7 +446,7 @@ class _ChatScreenState extends State<ChatScreen>
                                   ),
                                   title: Text(data['username'], style: sidebarName),
                                   subtitle: Text(
-                                    online ? "Online" : "Offline",
+                                     statusText,
                                     style: sidebarStatus,
                                   ),
                                 );
