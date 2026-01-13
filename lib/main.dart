@@ -81,6 +81,18 @@ class _ChatScreenState extends State<ChatScreen>
 
   bool autoScrollEnabled = true;
   String? username;
+  
+  // ---------------- TEXT STYLES ----------------
+
+  TextStyle get sidebarName => const TextStyle(
+    color: Colors.white,
+    fontWeight: FontWeight.w500,
+  );
+
+  TextStyle get sidebarStatus => TextStyle(
+    color: Colors.white.withOpacity(0.6),
+    fontSize: 12,
+  );
 
   // ---------------- INIT ----------------
 
@@ -203,8 +215,13 @@ class _ChatScreenState extends State<ChatScreen>
               child: StreamBuilder<DatabaseEvent>(
                 stream: presenceRef.onValue,
                 builder: (_, presenceSnap) {
-                  final presenceData =
-                      presenceSnap.data?.snapshot.value as Map? ?? {};
+                  if (!presenceSnap.hasData) {
+                    return const SizedBox();
+                  }
+
+                  final raw = presenceSnap.data!.snapshot.value;
+                  final Map<dynamic, dynamic> presenceData =
+                      raw is Map ? raw : {};
 
                   return StreamBuilder<QuerySnapshot>(
                     stream: usersRef.snapshots(),
@@ -214,38 +231,44 @@ class _ChatScreenState extends State<ChatScreen>
                       return ListView(
                         padding: const EdgeInsets.all(10),
                         children: userSnap.data!.docs.map((doc) {
-                          final user =
-                              doc.data() as Map<String, dynamic>;
+                          final data = doc.data() as Map<String, dynamic>;
                           final uid = doc.id;
 
-                          final status = presenceData[uid] as Map?;
+                          final status = presenceData[uid];
                           final bool online =
-                              status?['online'] == true;
+                              status is Map && status['online'] == true;
+
+                          final Timestamp? lastSeenTs =
+                              data['lastSeen'] as Timestamp?;
+                          final DateTime now = DateTime.now();
 
                           String statusText;
+
                           if (online) {
                             statusText = "Online";
-                          } else if (status?['lastSeen'] is int) {
-                            final diff = DateTime.now().difference(
-                              DateTime.fromMillisecondsSinceEpoch(
-                                  status!['lastSeen']),
-                            );
-                            statusText =
-                                "Last seen ${diff.inMinutes} min ago";
-                          } else {
+                          } else if (lastSeenTs == null) {
                             statusText = "Offline";
+                          } else {
+                            final diff = now.difference(lastSeenTs.toDate());
+                            if (diff.inMinutes < 1) {
+                              statusText = "Last seen just now";
+                            } else if (diff.inMinutes < 60) {
+                              statusText = "Last seen ${diff.inMinutes} min ago";
+                            } else if (diff.inHours < 24) {
+                              statusText = "Last seen ${diff.inHours} h ago";
+                            } else {
+                              statusText = "Last seen ${diff.inDays} d ago";
+                            }
                           }
 
                           return ListTile(
                             leading: Icon(
                               Icons.circle,
                               size: 10,
-                              color: online
-                                  ? Colors.cyanAccent
-                                  : Colors.grey,
+                              color: online ? Colors.cyanAccent : Colors.grey,
                             ),
-                            title: Text(user['username']),
-                            subtitle: Text(statusText),
+                            title: Text(data['username'], style: this.sidebarName),
+                            subtitle: Text(statusText, style: this.sidebarStatus),
                           );
                         }).toList(),
                       );
