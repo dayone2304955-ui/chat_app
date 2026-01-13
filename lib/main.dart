@@ -170,8 +170,15 @@ class _ChatScreenState extends State<ChatScreen>
       await askUsername();
     } else {
       username = doc['username'];
+
+      // 🔥 Optimistic online (instant UI)
+      await usersRef.doc(user.uid).update({
+        'online': true,
+        'lastSeen': FieldValue.serverTimestamp(),
+      });
     }
   }
+
 
   // ---------------- PRESENCE (ADDED) ----------------
 
