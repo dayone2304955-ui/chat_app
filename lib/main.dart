@@ -63,7 +63,8 @@ class ChatScreen extends StatefulWidget {
   State<ChatScreen> createState() => _ChatScreenState();
 }
 
-class _ChatScreenState extends State<ChatScreen> {
+class _ChatScreenState extends State<ChatScreen>
+    with WidgetsBindingObserver {
   final messagesRef = FirebaseFirestore.instance.collection('messages');
   final usersRef = FirebaseFirestore.instance.collection('users');
 
@@ -113,6 +114,7 @@ class _ChatScreenState extends State<ChatScreen> {
   @override
   void initState() {
     super.initState();
+    WidgetsBinding.instance.addObserver(this);
     setupUser();
     setupPresence(); // ✅ ADDED
     _scrollController.addListener(() {
@@ -127,9 +129,35 @@ class _ChatScreenState extends State<ChatScreen> {
 
   @override
   void dispose() {
+    WidgetsBinding.instance.removeObserver(this);
     _connectionSub?.cancel(); // ✅ ADDED
     super.dispose();
   }
+
+  @override
+  void didChangeAppLifecycleState(AppLifecycleState state) async {
+    final user = FirebaseAuth.instance.currentUser;
+    if (user == null) return;
+
+    if (state == AppLifecycleState.paused ||
+        state == AppLifecycleState.detached ||
+        state == AppLifecycleState.inactive) {
+      // App goes to background → offline
+      await usersRef.doc(user.uid).update({
+        'online': false,
+        'lastSeen': FieldValue.serverTimestamp(),
+      });
+    }
+
+    if (state == AppLifecycleState.resumed) {
+      // App comes back → online
+      await usersRef.doc(user.uid).update({
+        'online': true,
+        'lastSeen': FieldValue.serverTimestamp(),
+      });
+    }
+  }
+
 
   Future<void> setupUser() async {
     final user = FirebaseAuth.instance.currentUser!;
