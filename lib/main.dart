@@ -1,19 +1,23 @@
+import 'dart:ui';
+import 'dart:async'; // ✅ ADDED
 import 'package:flutter/material.dart';
 import 'package:firebase_core/firebase_core.dart';
 import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:firebase_auth/firebase_auth.dart';
-import 'package:flutter/gestures.dart';
+import 'package:firebase_database/firebase_database.dart'; // ✅ ADDED
 
 void main() async {
   WidgetsFlutterBinding.ensureInitialized();
+
   await Firebase.initializeApp(
     options: const FirebaseOptions(
-      apiKey: "YOUR_API_KEY",
-      authDomain: "YOUR_PROJECT.firebaseapp.com",
-      projectId: "YOUR_PROJECT_ID",
-      storageBucket: "YOUR_PROJECT.appspot.com",
-      messagingSenderId: "SENDER_ID",
-      appId: "APP_ID",
+      apiKey: "AIzaSyAVjCfOKeVI8wh3Y0JRWrAsfV_mlAmuwv8",
+      authDomain: "neon-chat-d6f99.firebaseapp.com",
+      projectId: "neon-chat-d6f99",
+      storageBucket: "neon-chat-d6f99.firebasestorage.app",
+      messagingSenderId: "895991678818",
+      appId: "1:895991678818:web:ac39a6c099907239d90e3b",
+      measurementId: "G-TCW25PPZG7"
     ),
   );
 
@@ -21,21 +25,39 @@ void main() async {
   runApp(const MyApp());
 }
 
-class MyApp extends StatelessWidget {
+enum AppTheme { auroraGlass, deepSpace }
+
+class MyApp extends StatefulWidget {
   const MyApp({super.key});
+
+  @override
+  State<MyApp> createState() => _MyAppState();
+}
+
+class _MyAppState extends State<MyApp> {
+  AppTheme theme = AppTheme.auroraGlass;
 
   @override
   Widget build(BuildContext context) {
     return MaterialApp(
       debugShowCheckedModeBanner: false,
-      theme: ThemeData.dark(),
-      home: const ChatScreen(),
+      home: ChatScreen(
+        theme: theme,
+        onThemeChanged: (t) => setState(() => theme = t),
+      ),
     );
   }
 }
 
 class ChatScreen extends StatefulWidget {
-  const ChatScreen({super.key});
+  final AppTheme theme;
+  final ValueChanged<AppTheme> onThemeChanged;
+
+  const ChatScreen({
+    super.key,
+    required this.theme,
+    required this.onThemeChanged,
+  });
 
   @override
   State<ChatScreen> createState() => _ChatScreenState();
@@ -49,16 +71,65 @@ class _ChatScreenState extends State<ChatScreen> {
   final FocusNode _focusNode = FocusNode();
   final ScrollController _scrollController = ScrollController();
 
+  // ✅ PRESENCE (ADDED)
+  final FirebaseDatabase _rtdb = FirebaseDatabase.instance;
+  DatabaseReference? _statusRef;
+  StreamSubscription? _connectionSub;
+
   bool autoScrollEnabled = true;
   String? username;
+
+  // ---------------- TEXT STYLES ----------------
+
+  TextStyle get appTitle => const TextStyle(
+        fontSize: 22,
+        fontWeight: FontWeight.w600,
+        color: Colors.white,
+        letterSpacing: 0.5,
+      );
+
+  TextStyle get sidebarName => const TextStyle(
+        color: Colors.white,
+        fontWeight: FontWeight.w500,
+      );
+
+  TextStyle get sidebarStatus => TextStyle(
+        color: Colors.white.withOpacity(0.6),
+        fontSize: 12,
+      );
+
+  TextStyle get chatText => const TextStyle(
+        color: Colors.white,
+        fontSize: 15,
+      );
+
+  TextStyle get inputText => const TextStyle(
+        color: Colors.white,
+        fontSize: 15,
+      );
+
+  // ---------------- INIT ----------------
 
   @override
   void initState() {
     super.initState();
     setupUser();
+    setupPresence(); // ✅ ADDED
+    _scrollController.addListener(() {
+      if (!_scrollController.hasClients) return;
+      final atBottom = _scrollController.offset >=
+          _scrollController.position.maxScrollExtent - 24;
+      if (atBottom && !autoScrollEnabled) {
+        setState(() => autoScrollEnabled = true);
+      }
+    });
   }
 
-  // ---------------- USER SETUP ----------------
+  @override
+  void dispose() {
+    _connectionSub?.cancel(); // ✅ ADDED
+    super.dispose();
+  }
 
   Future<void> setupUser() async {
     final user = FirebaseAuth.instance.currentUser!;
@@ -72,22 +143,63 @@ class _ChatScreenState extends State<ChatScreen> {
     }
   }
 
+  // ---------------- PRESENCE (ADDED) ----------------
+
+  Future<void> setupPresence() async {
+    final user = FirebaseAuth.instance.currentUser!;
+    final uid = user.uid;
+
+    final connectedRef = _rtdb.ref('.info/connected');
+    _statusRef = _rtdb.ref('status/$uid');
+
+    _connectionSub = connectedRef.onValue.listen((event) async {
+      final connected = event.snapshot.value == true;
+
+      if (connected) {
+        await _statusRef!.onDisconnect().set({
+          'online': false,
+          'lastSeen': ServerValue.timestamp,
+        });
+
+        await _statusRef!.set({
+          'online': true,
+          'lastSeen': ServerValue.timestamp,
+        });
+
+        await usersRef.doc(uid).update({
+          'online': true,
+          'lastSeen': FieldValue.serverTimestamp(),
+        });
+      }
+    });
+
+    _statusRef!.onValue.listen((event) async {
+      final data = event.snapshot.value as Map?;
+      if (data == null) return;
+
+      await usersRef.doc(uid).update({
+        'online': data['online'],
+        'lastSeen': FieldValue.serverTimestamp(),
+      });
+    });
+  }
+
   Future<void> askUsername() async {
-    final nameCtrl = TextEditingController();
+    final ctrl = TextEditingController();
 
     await showDialog(
       context: context,
       barrierDismissible: false,
       builder: (_) => AlertDialog(
         title: const Text("Choose username"),
-        content: TextField(controller: nameCtrl),
+        content: TextField(controller: ctrl),
         actions: [
           TextButton(
             onPressed: () async {
-              if (nameCtrl.text.trim().isEmpty) return;
+              if (ctrl.text.trim().isEmpty) return;
 
               final user = FirebaseAuth.instance.currentUser!;
-              username = nameCtrl.text.trim();
+              username = ctrl.text.trim();
 
               await usersRef.doc(user.uid).set({
                 'username': username,
@@ -98,7 +210,7 @@ class _ChatScreenState extends State<ChatScreen> {
               Navigator.pop(context);
             },
             child: const Text("Join"),
-          )
+          ),
         ],
       ),
     );
@@ -135,17 +247,69 @@ class _ChatScreenState extends State<ChatScreen> {
 
     _scrollController.animateTo(
       _scrollController.position.maxScrollExtent,
-      duration: const Duration(milliseconds: 300),
+      duration: const Duration(milliseconds: 280),
       curve: Curves.easeOut,
     );
   }
 
-  @override
-  void dispose() {
-    _scrollController.dispose();
-    _controller.dispose();
-    _focusNode.dispose();
-    super.dispose();
+  // ---------------- VISUAL HELPERS ----------------
+
+  Widget auroraBackground({required Widget child}) {
+    final isAurora = widget.theme == AppTheme.auroraGlass;
+
+    return Container(
+      decoration: BoxDecoration(
+        gradient: isAurora
+            ? const RadialGradient(
+                center: Alignment.topRight,
+                radius: 1.2,
+                colors: [
+                  Color(0xFF1F7AFF),
+                  Color(0xFF0B1025),
+                  Color(0xFF05070E),
+                ],
+              )
+            : const LinearGradient(
+                begin: Alignment.topCenter,
+                end: Alignment.bottomCenter,
+                colors: [
+                  Color(0xFF02040A),
+                  Color(0xFF080D1A),
+                ],
+              ),
+      ),
+      child: child,
+    );
+  }
+
+  Widget glassPanel({required Widget child}) {
+    final isAurora = widget.theme == AppTheme.auroraGlass;
+
+    return ClipRRect(
+      borderRadius: BorderRadius.circular(20),
+      child: BackdropFilter(
+        filter: ImageFilter.blur(sigmaX: 26, sigmaY: 26),
+        child: Container(
+          decoration: BoxDecoration(
+            gradient: LinearGradient(
+              colors: isAurora
+                  ? [
+                      Colors.white.withOpacity(0.14),
+                      Colors.white.withOpacity(0.04),
+                    ]
+                  : [
+                      Colors.white.withOpacity(0.08),
+                      Colors.white.withOpacity(0.02),
+                    ],
+            ),
+            border: Border.all(
+              color: Colors.white.withOpacity(0.18),
+            ),
+          ),
+          child: child,
+        ),
+      ),
+    );
   }
 
   // ---------------- UI ----------------
@@ -153,141 +317,172 @@ class _ChatScreenState extends State<ChatScreen> {
   @override
   Widget build(BuildContext context) {
     return Scaffold(
-      appBar: AppBar(
-        title: const Text("Neon Chat"),
-        backgroundColor: Colors.black,
-        actions: [
-          IconButton(
-            icon: Icon(
-              autoScrollEnabled ? Icons.arrow_downward : Icons.pause,
-              color: autoScrollEnabled ? Colors.greenAccent : Colors.grey,
-            ),
-            tooltip: autoScrollEnabled
-                ? "Auto-scroll ON"
-                : "Auto-scroll OFF",
-            onPressed: () {
-              setState(() => autoScrollEnabled = !autoScrollEnabled);
-            },
-          )
-        ],
-      ),
-      body: Row(
-        children: [
-          // -------- LEFT SIDEBAR --------
-          Container(
-            width: 220,
-            color: Colors.black87,
-            child: StreamBuilder<QuerySnapshot>(
-              stream: usersRef.snapshots(),
-              builder: (context, snapshot) {
-                if (!snapshot.hasData) return const SizedBox();
-
-                return ListView(
-                  children: snapshot.data!.docs.map((doc) {
-                    final data = doc.data() as Map<String, dynamic>;
-                    final online = data['online'] == true;
-
-                    return ListTile(
-                      leading: Icon(
-                        Icons.circle,
-                        size: 10,
-                        color: online ? Colors.greenAccent : Colors.grey,
-                      ),
-                      title: Text(
-                        data['username'],
-                        style: const TextStyle(color: Colors.white),
-                      ),
-                      subtitle: Text(
-                        online ? "Online" : "Offline",
-                        style: TextStyle(
-                          fontSize: 12,
-                          color:
-                              online ? Colors.greenAccent : Colors.grey,
-                        ),
-                      ),
-                    );
-                  }).toList(),
-                );
-              },
-            ),
-          ),
-
-          // -------- CHAT AREA --------
-          Expanded(
-            child: Column(
-              children: [
-                // MESSAGES
-                Expanded(
-                  child: StreamBuilder<QuerySnapshot>(
-                    stream: messagesRef
-                        .orderBy('createdAt')
-                        .snapshots(),
-                    builder: (context, snapshot) {
-                      if (!snapshot.hasData) {
-                        return const Center(
-                            child: CircularProgressIndicator());
-                      }
-
-                      WidgetsBinding.instance.addPostFrameCallback((_) {
-                        if (autoScrollEnabled) scrollToBottom();
-                      });
-
-                      final messages = snapshot.data!.docs;
-
-                      return NotificationListener<UserScrollNotification>(
-                        onNotification: (notification) {
-                          if (notification.direction ==
-                              ScrollDirection.forward) {
-                            setState(() => autoScrollEnabled = false);
-                          }
-                          return false;
-                        },
-                        child: ListView.builder(
-                          controller: _scrollController,
-                          padding: const EdgeInsets.all(8),
-                          itemCount: messages.length,
-                          itemBuilder: (context, index) {
-                            final data = messages[index].data()
-                                as Map<String, dynamic>;
-
-                            return Padding(
-                              padding:
-                                  const EdgeInsets.symmetric(vertical: 4),
-                              child: Text(
-                                "${data['username']}: ${data['text']}",
-                                style: const TextStyle(
-                                  color: Colors.greenAccent,
-                                  fontSize: 16,
-                                ),
+      backgroundColor: Colors.transparent,
+      body: auroraBackground(
+        child: SafeArea(
+          child: Column(
+            children: [
+              Padding(
+                padding: const EdgeInsets.all(14),
+                child: Row(
+                  children: [
+                    Text("Sky", style: appTitle),
+                    const Spacer(),
+                    TextButton(
+                      onPressed: () {
+                        showDialog(
+                          context: context,
+                          builder: (_) => SimpleDialog(
+                            title: const Text("Theme"),
+                            children: [
+                              SimpleDialogOption(
+                                onPressed: () {
+                                  widget.onThemeChanged(AppTheme.auroraGlass);
+                                  Navigator.pop(context);
+                                },
+                                child: const Text("Aurora Glass (Premium)"),
                               ),
+                              SimpleDialogOption(
+                                onPressed: () {
+                                  widget.onThemeChanged(AppTheme.deepSpace);
+                                  Navigator.pop(context);
+                                },
+                                child: const Text("Deep Space (Night Focus)"),
+                              ),
+                            ],
+                          ),
+                        );
+                      },
+                      child: const Text(
+                        "Theme",
+                        style: TextStyle(color: Colors.white),
+                      ),
+                    ),
+                  ],
+                ),
+              ),
+              Expanded(
+                child: Row(
+                  children: [
+                    SizedBox(
+                      width: 220,
+                      child: glassPanel(
+                        child: StreamBuilder<QuerySnapshot>(
+                          stream: usersRef.snapshots(),
+                          builder: (_, snap) {
+                            if (!snap.hasData) return const SizedBox();
+                            return ListView(
+                              padding: const EdgeInsets.all(10),
+                              children: snap.data!.docs.map((doc) {
+                                final data = doc.data() as Map<String, dynamic>;
+                                final online = data['online'] == true;
+                                return ListTile(
+                                  leading: Icon(
+                                    Icons.circle,
+                                    size: 10,
+                                    color: online
+                                        ? Colors.cyanAccent
+                                        : Colors.grey,
+                                  ),
+                                  title: Text(data['username'], style: sidebarName),
+                                  subtitle: Text(
+                                    online ? "Online" : "Offline",
+                                    style: sidebarStatus,
+                                  ),
+                                );
+                              }).toList(),
                             );
                           },
                         ),
-                      );
-                    },
-                  ),
-                ),
-
-                // INPUT
-                Container(
-                  padding: const EdgeInsets.all(8),
-                  color: Colors.black,
-                  child: TextField(
-                    controller: _controller,
-                    focusNode: _focusNode,
-                    style: const TextStyle(color: Colors.greenAccent),
-                    decoration: const InputDecoration(
-                      hintText: "Type a message...",
-                      hintStyle: TextStyle(color: Colors.greenAccent),
-                      border: OutlineInputBorder(),
+                      ),
                     ),
-                    onSubmitted: (_) => sendMessage(),
-                  ),
+                    Expanded(
+                      child: Column(
+                        children: [
+                          Expanded(
+                            child: StreamBuilder<QuerySnapshot>(
+                              stream: messagesRef.orderBy('createdAt').snapshots(),
+                              builder: (_, snap) {
+                                if (!snap.hasData) {
+                                  return const Center(child: CircularProgressIndicator());
+                                }
+
+                                WidgetsBinding.instance.addPostFrameCallback((_) {
+                                  if (autoScrollEnabled) scrollToBottom();
+                                });
+
+                                final docs = snap.data!.docs;
+
+                                return ListView.builder(
+                                  controller: _scrollController,
+                                  padding: const EdgeInsets.all(14),
+                                  itemCount: docs.length,
+                                  itemBuilder: (_, i) {
+                                    final data =
+                                        docs[i].data() as Map<String, dynamic>;
+                                    final isMe = data['username'] == username;
+
+                                    return Padding(
+                                      padding: const EdgeInsets.symmetric(vertical: 6),
+                                      child: Align(
+                                        alignment: isMe
+                                            ? Alignment.centerRight
+                                            : Alignment.centerLeft,
+                                        child: Container(
+                                          constraints:
+                                              const BoxConstraints(maxWidth: 420),
+                                          padding: const EdgeInsets.symmetric(
+                                              horizontal: 12, vertical: 8),
+                                          decoration: BoxDecoration(
+                                            color: widget.theme ==
+                                                    AppTheme.auroraGlass
+                                                ? Colors.white.withOpacity(0.10)
+                                                : Colors.white.withOpacity(0.06),
+                                            borderRadius:
+                                                BorderRadius.circular(14),
+                                            border: Border.all(
+                                              color: Colors.white.withOpacity(0.12),
+                                            ),
+                                          ),
+                                          child: Text(
+                                            data['text'],
+                                            style: chatText,
+                                          ),
+                                        ),
+                                      ),
+                                    );
+                                  },
+                                );
+                              },
+                            ),
+                          ),
+                          Padding(
+                            padding: const EdgeInsets.all(14),
+                            child: glassPanel(
+                              child: TextField(
+                                controller: _controller,
+                                focusNode: _focusNode,
+                                style: inputText,
+                                onSubmitted: (_) => sendMessage(),
+                                decoration: InputDecoration(
+                                  hintText: "Type a message…",
+                                  hintStyle: TextStyle(
+                                      color: Colors.white.withOpacity(0.5)),
+                                  border: InputBorder.none,
+                                  contentPadding: const EdgeInsets.all(14),
+                                ),
+                              ),
+                            ),
+                          ),
+                        ],
+                      ),
+                    ),
+                  ],
                 ),
-              ],
-            ),
+              ),
+            ],
           ),
-        ],
+        ),
       ),
     );
   }
