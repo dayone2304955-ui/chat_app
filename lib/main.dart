@@ -1,4 +1,3 @@
-import 'dart:ui';
 import 'dart:async';
 import 'package:flutter/material.dart';
 import 'package:firebase_core/firebase_core.dart';
@@ -25,92 +24,67 @@ void main() async {
   runApp(const MyApp());
 }
 
-enum AppTheme { auroraGlass, deepSpace }
-
-class MyApp extends StatefulWidget {
+class MyApp extends StatelessWidget {
   const MyApp({super.key});
 
   @override
-  State<MyApp> createState() => _MyAppState();
-}
-
-class _MyAppState extends State<MyApp> {
-  AppTheme theme = AppTheme.auroraGlass;
-
-  @override
   Widget build(BuildContext context) {
-    return MaterialApp(
+    return const MaterialApp(
       debugShowCheckedModeBanner: false,
-      home: ChatScreen(
-        theme: theme,
-        onThemeChanged: (t) => setState(() => theme = t),
-      ),
+      home: ChatScreen(),
     );
   }
 }
 
 class ChatScreen extends StatefulWidget {
-  final AppTheme theme;
-  final ValueChanged<AppTheme> onThemeChanged;
-
-  const ChatScreen({
-    super.key,
-    required this.theme,
-    required this.onThemeChanged,
-  });
+  const ChatScreen({super.key});
 
   @override
   State<ChatScreen> createState() => _ChatScreenState();
 }
 
-class _ChatScreenState extends State<ChatScreen>
-    with WidgetsBindingObserver {
-  final DatabaseReference presenceRef =
+class _ChatScreenState extends State<ChatScreen> {
+  // ---------------- FIREBASE ----------------
+
+  final usersRef = FirebaseFirestore.instance.collection('users');
+  final messagesRef = FirebaseFirestore.instance.collection('messages');
+
+  final DatabaseReference presenceRoot =
       FirebaseDatabase.instance.ref('status');
 
-  final messagesRef = FirebaseFirestore.instance.collection('messages');
-  final usersRef = FirebaseFirestore.instance.collection('users');
-
-  final TextEditingController _controller = TextEditingController();
-  final FocusNode _focusNode = FocusNode();
-  final ScrollController _scrollController = ScrollController();
-
-  final FirebaseDatabase _rtdb = FirebaseDatabase.instance;
-  DatabaseReference? _statusRef;
+  DatabaseReference? _myStatusRef;
   StreamSubscription? _connectionSub;
 
-  bool autoScrollEnabled = true;
+  // ---------------- UI ----------------
+
+  final TextEditingController _controller = TextEditingController();
   String? username;
-  
+
   // ---------------- TEXT STYLES ----------------
 
   TextStyle get sidebarName => const TextStyle(
-    color: Colors.white,
-    fontWeight: FontWeight.w500,
-  );
+        color: Colors.white,
+        fontWeight: FontWeight.w500,
+      );
 
   TextStyle get sidebarStatus => TextStyle(
-    color: Colors.white.withOpacity(0.6),
-    fontSize: 12,
-  );
+        color: Colors.white.withOpacity(0.6),
+        fontSize: 12,
+      );
 
   // ---------------- INIT ----------------
 
   @override
   void initState() {
     super.initState();
-    WidgetsBinding.instance.addObserver(this);
     setupUser();
     setupPresence();
   }
 
   @override
   void dispose() {
-    WidgetsBinding.instance.removeObserver(this);
     _connectionSub?.cancel();
     _controller.dispose();
-    _focusNode.dispose();
-    _scrollController.dispose();
     super.dispose();
   }
 
@@ -126,33 +100,6 @@ class _ChatScreenState extends State<ChatScreen>
       username = doc['username'];
     }
   }
-
-  // ---------------- PRESENCE (FINAL & CORRECT) ----------------
-
-  Future<void> setupPresence() async {
-    final user = FirebaseAuth.instance.currentUser!;
-    final uid = user.uid;
-
-    final connectedRef = _rtdb.ref('.info/connected');
-    _statusRef = _rtdb.ref('status/$uid');
-
-    _connectionSub?.cancel();
-    _connectionSub = connectedRef.onValue.listen((event) {
-      if (event.snapshot.value != true) return;
-
-      _statusRef!.onDisconnect().set({
-        'online': false,
-        'lastSeen': ServerValue.timestamp,
-      });
-
-      _statusRef!.set({
-        'online': true,
-        'lastSeen': ServerValue.timestamp,
-      });
-    });
-  }
-
-  // ---------------- USERNAME ----------------
 
   Future<void> askUsername() async {
     final ctrl = TextEditingController();
@@ -173,6 +120,7 @@ class _ChatScreenState extends State<ChatScreen>
 
               await usersRef.doc(user.uid).set({
                 'username': username,
+                'lastSeen': FieldValue.serverTimestamp(),
               });
 
               Navigator.pop(context);
@@ -182,6 +130,32 @@ class _ChatScreenState extends State<ChatScreen>
         ],
       ),
     );
+  }
+
+  // ---------------- PRESENCE (FINAL, STABLE) ----------------
+
+  void setupPresence() {
+    final user = FirebaseAuth.instance.currentUser!;
+    final uid = user.uid;
+
+    final connectedRef =
+        FirebaseDatabase.instance.ref('.info/connected');
+    _myStatusRef = presenceRoot.child(uid);
+
+    _connectionSub?.cancel();
+    _connectionSub = connectedRef.onValue.listen((event) {
+      if (event.snapshot.value != true) return;
+
+      _myStatusRef!.onDisconnect().set({
+        'online': false,
+        'lastSeen': ServerValue.timestamp,
+      });
+
+      _myStatusRef!.set({
+        'online': true,
+        'lastSeen': ServerValue.timestamp,
+      });
+    });
   }
 
   // ---------------- MESSAGE ----------------
@@ -197,7 +171,6 @@ class _ChatScreenState extends State<ChatScreen>
     });
 
     _controller.clear();
-    _focusNode.requestFocus();
   }
 
   // ---------------- UI ----------------
@@ -205,7 +178,7 @@ class _ChatScreenState extends State<ChatScreen>
   @override
   Widget build(BuildContext context) {
     return Scaffold(
-      backgroundColor: Colors.transparent,
+      backgroundColor: const Color(0xFF0B1025),
       body: SafeArea(
         child: Row(
           children: [
@@ -213,51 +186,46 @@ class _ChatScreenState extends State<ChatScreen>
             SizedBox(
               width: 220,
               child: StreamBuilder<DatabaseEvent>(
-                stream: presenceRef.onValue,
+                stream: presenceRoot.onValue,
                 builder: (_, presenceSnap) {
-                  if (!presenceSnap.hasData) {
-                    return const SizedBox();
-                  }
-
-                  final raw = presenceSnap.data!.snapshot.value;
-                  final Map<dynamic, dynamic> presenceData =
-                      raw is Map ? raw : {};
+                  final Map presence =
+                      presenceSnap.data?.snapshot.value as Map? ?? {};
 
                   return StreamBuilder<QuerySnapshot>(
                     stream: usersRef.snapshots(),
                     builder: (_, userSnap) {
-                      if (!userSnap.hasData) return const SizedBox();
+                      if (!userSnap.hasData) {
+                        return const Center(
+                          child: CircularProgressIndicator(),
+                        );
+                      }
 
                       return ListView(
                         padding: const EdgeInsets.all(10),
                         children: userSnap.data!.docs.map((doc) {
-                          final data = doc.data() as Map<String, dynamic>;
+                          final data =
+                              doc.data() as Map<String, dynamic>;
                           final uid = doc.id;
 
-                          final status = presenceData[uid];
+                          final status = presence[uid] as Map?;
                           final bool online =
-                              status is Map && status['online'] == true;
-
-                          final Timestamp? lastSeenTs =
-                              data['lastSeen'] as Timestamp?;
-                          final DateTime now = DateTime.now();
+                              status?['online'] == true;
 
                           String statusText;
 
                           if (online) {
                             statusText = "Online";
-                          } else if (lastSeenTs == null) {
-                            statusText = "Offline";
                           } else {
-                            final diff = now.difference(lastSeenTs.toDate());
-                            if (diff.inMinutes < 1) {
-                              statusText = "Last seen just now";
-                            } else if (diff.inMinutes < 60) {
-                              statusText = "Last seen ${diff.inMinutes} min ago";
-                            } else if (diff.inHours < 24) {
-                              statusText = "Last seen ${diff.inHours} h ago";
+                            final ts =
+                                status?['lastSeen'] as int?;
+                            if (ts == null) {
+                              statusText = "Offline";
                             } else {
-                              statusText = "Last seen ${diff.inDays} d ago";
+                              final diff = DateTime.now()
+                                  .difference(
+                                      DateTime.fromMillisecondsSinceEpoch(ts));
+                              statusText =
+                                  "Last seen ${diff.inMinutes} min ago";
                             }
                           }
 
@@ -265,10 +233,18 @@ class _ChatScreenState extends State<ChatScreen>
                             leading: Icon(
                               Icons.circle,
                               size: 10,
-                              color: online ? Colors.cyanAccent : Colors.grey,
+                              color: online
+                                  ? Colors.cyanAccent
+                                  : Colors.grey,
                             ),
-                            title: Text(data['username'], style: this.sidebarName),
-                            subtitle: Text(statusText, style: this.sidebarStatus),
+                            title: Text(
+                              data['username'],
+                              style: sidebarName,
+                            ),
+                            subtitle: Text(
+                              statusText,
+                              style: sidebarStatus,
+                            ),
                           );
                         }).toList(),
                       );
@@ -280,26 +256,56 @@ class _ChatScreenState extends State<ChatScreen>
 
             // -------- CHAT --------
             Expanded(
-              child: StreamBuilder<QuerySnapshot>(
-                stream:
-                    messagesRef.orderBy('createdAt').snapshots(),
-                builder: (_, snap) {
-                  if (!snap.hasData) {
-                    return const Center(
-                        child: CircularProgressIndicator());
-                  }
+              child: Column(
+                children: [
+                  Expanded(
+                    child: StreamBuilder<QuerySnapshot>(
+                      stream: messagesRef
+                          .orderBy('createdAt')
+                          .snapshots(),
+                      builder: (_, snap) {
+                        if (!snap.hasData) {
+                          return const Center(
+                              child: CircularProgressIndicator());
+                        }
 
-                  return ListView(
-                    children: snap.data!.docs.map((doc) {
-                      final data =
-                          doc.data() as Map<String, dynamic>;
-                      return ListTile(
-                        title: Text(data['username']),
-                        subtitle: Text(data['text']),
-                      );
-                    }).toList(),
-                  );
-                },
+                        return ListView(
+                          padding: const EdgeInsets.all(10),
+                          children: snap.data!.docs.map((doc) {
+                            final data =
+                                doc.data() as Map<String, dynamic>;
+                            return ListTile(
+                              title: Text(
+                                data['username'],
+                                style:
+                                    const TextStyle(color: Colors.white),
+                              ),
+                              subtitle: Text(
+                                data['text'],
+                                style:
+                                    const TextStyle(color: Colors.white70),
+                              ),
+                            );
+                          }).toList(),
+                        );
+                      },
+                    ),
+                  ),
+                  Padding(
+                    padding: const EdgeInsets.all(10),
+                    child: TextField(
+                      controller: _controller,
+                      onSubmitted: (_) => sendMessage(),
+                      style: const TextStyle(color: Colors.white),
+                      decoration: const InputDecoration(
+                        hintText: "Type a message",
+                        hintStyle:
+                            TextStyle(color: Colors.white54),
+                        border: OutlineInputBorder(),
+                      ),
+                    ),
+                  ),
+                ],
               ),
             ),
           ],
