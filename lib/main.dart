@@ -16,8 +16,7 @@ void main() async {
       storageBucket: "neon-chat-d6f99.firebasestorage.app",
       messagingSenderId: "895991678818",
       appId: "1:895991678818:web:ac39a6c099907239d90e3b",
-      measurementId: "G-TCW25PPZG7",
-      databaseURL: "https://neon-chat-d6f99-default-rtdb.firebaseio.com",
+      measurementId: "G-TCW25PPZG7"
     ),
   );
 
@@ -143,29 +142,41 @@ class _ChatScreenState extends State<ChatScreen> {
   }
 
   // ---------------- PRESENCE (FINAL, STABLE) ----------------
-
   void setupPresence() {
     final user = FirebaseAuth.instance.currentUser!;
     final uid = user.uid;
+
     final connectedRef = _database.ref('.info/connected');
     _myStatusRef = presenceRoot.child(uid);
 
     _connectionSub?.cancel();
-    _connectionSub = connectedRef.onValue.listen((event) {
-      if (event.snapshot.value != true) return;
+    _connectionSub = connectedRef.onValue.listen((event) async {
+      final connected = event.snapshot.value == true;
 
-      _myStatusRef!.onDisconnect().set({
+      if (!connected) {
+        // Immediately mark offline if connection drops
+        await _myStatusRef!.set({
+          'online': false,
+          'lastSeen': ServerValue.timestamp,
+        });
+        return;
+      }
+
+      // Setup disconnect handler FIRST
+      await _myStatusRef!.onDisconnect().set({
         'online': false,
         'lastSeen': ServerValue.timestamp,
       });
 
-      _myStatusRef!.set({
+      // Then mark online
+      await _myStatusRef!.set({
         'online': true,
         'lastSeen': ServerValue.timestamp,
       });
     });
   }
 
+  
   // ---------------- MESSAGE ----------------
 
   void sendMessage() async {
@@ -190,50 +201,45 @@ class _ChatScreenState extends State<ChatScreen> {
       body: SafeArea(
         child: Row(
           children: [
+
             // -------- SIDEBAR --------
             SizedBox(
               width: 220,
               child: StreamBuilder<DatabaseEvent>(
                 stream: presenceRoot.onValue,
                 builder: (_, presenceSnap) {
-                  final Map presence =
-                      presenceSnap.data?.snapshot.value as Map? ?? {};
+                  final raw = presenceSnap.data?.snapshot.value;
+                  final Map<String, dynamic> presence =
+                      raw is Map ? Map<String, dynamic>.from(raw) : {};
 
                   return StreamBuilder<QuerySnapshot>(
                     stream: usersRef.snapshots(),
                     builder: (_, userSnap) {
                       if (!userSnap.hasData) {
-                        return const Center(
-                          child: CircularProgressIndicator(),
-                        );
+                        return const Center(child: CircularProgressIndicator());
                       }
 
                       return ListView(
                         padding: const EdgeInsets.all(10),
                         children: userSnap.data!.docs.map((doc) {
-                          final data =
-                              doc.data() as Map<String, dynamic>;
+                          final data = doc.data() as Map<String, dynamic>;
                           final uid = doc.id;
 
                           final status = presence[uid] as Map?;
-                          final bool online =
-                              status?['online'] == true;
+                          final bool online = status?['online'] == true;
 
                           String statusText;
-
                           if (online) {
                             statusText = "Online";
                           } else {
-                            final ts =
-                                status?['lastSeen'] as int?;
+                            final ts = status?['lastSeen'] as int?;
                             if (ts == null) {
                               statusText = "Offline";
                             } else {
-                              final diff = DateTime.now()
-                                  .difference(
-                                      DateTime.fromMillisecondsSinceEpoch(ts));
-                              statusText =
-                                  "Last seen ${diff.inMinutes} min ago";
+                              final diff = DateTime.now().difference(
+                                DateTime.fromMillisecondsSinceEpoch(ts),
+                              );
+                              statusText = "Last seen ${diff.inMinutes} min ago";
                             }
                           }
 
@@ -241,18 +247,10 @@ class _ChatScreenState extends State<ChatScreen> {
                             leading: Icon(
                               Icons.circle,
                               size: 10,
-                              color: online
-                                  ? Colors.cyanAccent
-                                  : Colors.grey,
+                              color: online ? Colors.cyanAccent : Colors.grey,
                             ),
-                            title: Text(
-                              data['username'],
-                              style: sidebarName,
-                            ),
-                            subtitle: Text(
-                              statusText,
-                              style: sidebarStatus,
-                            ),
+                            title: Text(data['username'], style: sidebarName),
+                            subtitle: Text(statusText, style: sidebarStatus),
                           );
                         }).toList(),
                       );
@@ -261,6 +259,7 @@ class _ChatScreenState extends State<ChatScreen> {
                 },
               ),
             ),
+
 
             // -------- CHAT --------
             Expanded(
