@@ -170,14 +170,9 @@ class _ChatScreenState extends State<ChatScreen>
       await askUsername();
     } else {
       username = doc['username'];
-
-      // 🔥 Optimistic online (instant UI)
-      await usersRef.doc(user.uid).update({
-        'online': true,
-        'lastSeen': FieldValue.serverTimestamp(),
-      });
     }
   }
+
 
 
   // ---------------- PRESENCE (ADDED) ----------------
@@ -212,9 +207,9 @@ class _ChatScreenState extends State<ChatScreen>
     _statusRef!.onValue.listen((event) async {
       final data = event.snapshot.value as Map?;
       if (data == null) return;
-
       await usersRef.doc(uid).update({
         'online': data['online'],
+        'lastSeen': FieldValue.serverTimestamp(),
       });
     });
   }
