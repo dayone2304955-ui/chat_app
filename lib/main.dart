@@ -410,15 +410,8 @@ class _ChatScreenState extends State<ChatScreen>
                             return ListView(
                               padding: const EdgeInsets.all(10),
                               children: snap.data!.docs.map((doc) {
-                                final data = doc.data() as Map<String, dynamic>;
-                                
-                                final lastSeen = data['lastSeen'] as Timestamp?;
-                                final now = DateTime.now();
-
-                                bool online = false;
-                                if (lastSeen != null) {
-                                  online = now.difference(lastSeen.toDate()).inMinutes < 1;
-                                }
+                                final data = doc.data() as Map<String, dynamic>;                                
+                                final bool online = data['online'] == true;
                                 
                                 return ListTile(
                                   leading: Icon(
