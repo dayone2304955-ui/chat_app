@@ -1,10 +1,10 @@
 import 'dart:ui';
-import 'dart:async';
+import 'dart:async'; // ✅ ADDED
 import 'package:flutter/material.dart';
 import 'package:firebase_core/firebase_core.dart';
 import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:firebase_auth/firebase_auth.dart';
-import 'package:firebase_database/firebase_database.dart';
+import 'package:firebase_database/firebase_database.dart'; // ✅ ADDED
 
 void main() async {
   WidgetsFlutterBinding.ensureInitialized();
@@ -138,26 +138,32 @@ class _ChatScreenState extends State<ChatScreen>
     super.dispose();
   }
 
-
   @override
   void didChangeAppLifecycleState(AppLifecycleState state) async {
     final user = FirebaseAuth.instance.currentUser;
+    debugPrint('Lifecycle: $state'); // Debugging
     if (user == null) return;
 
     if (state == AppLifecycleState.paused ||
         state == AppLifecycleState.detached ||
         state == AppLifecycleState.inactive) {
+      // 🔴 App goes to background
+      _heartbeatTimer?.cancel(); // stop heartbeat
+
       await usersRef.doc(user.uid).update({
+        'online': false,
         'lastSeen': FieldValue.serverTimestamp(),
       });
     }
 
     if (state == AppLifecycleState.resumed) {
+      // 🟢 App comes back
       await usersRef.doc(user.uid).update({
+        'online': true,
         'lastSeen': FieldValue.serverTimestamp(),
       });
 
-      setupPresence();
+      setupPresence(); // restart RTDB + heartbeat
     }
   }
 
@@ -170,6 +176,7 @@ class _ChatScreenState extends State<ChatScreen>
       await askUsername();
     } else {
       username = doc['username'];
+      setOnlineStatus(true);
     }
   }
 
@@ -188,30 +195,30 @@ class _ChatScreenState extends State<ChatScreen>
       final connected = event.snapshot.value == true;
       if (!connected) return;
 
-      // 🔥 Guaranteed offline on crash / tab close
+      // If app crashes or disconnects
       await _statusRef!.onDisconnect().set({
         'online': false,
         'lastSeen': ServerValue.timestamp,
       });
 
-      // 🟢 Mark online
+      // Mark online in RTDB
       await _statusRef!.set({
         'online': true,
         'lastSeen': ServerValue.timestamp,
       });
     });
 
-    // 🔁 RTDB → Firestore mirror (online ONLY)
+    // 🔁 RTDB → Firestore mirror (single source)
     _statusRef!.onValue.listen((event) async {
       final data = event.snapshot.value as Map?;
       if (data == null) return;
 
       await usersRef.doc(uid).update({
         'online': data['online'],
+        'lastSeen': FieldValue.serverTimestamp(),
       });
     });
   }
-
 
   Future<void> askUsername() async {
     final ctrl = TextEditingController();
@@ -232,6 +239,7 @@ class _ChatScreenState extends State<ChatScreen>
 
               await usersRef.doc(user.uid).set({
                 'username': username,
+                'online': true,
                 'lastSeen': FieldValue.serverTimestamp(),
               });
 
@@ -242,6 +250,14 @@ class _ChatScreenState extends State<ChatScreen>
         ],
       ),
     );
+  }
+
+  Future<void> setOnlineStatus(bool online) async {
+    final user = FirebaseAuth.instance.currentUser!;
+    await usersRef.doc(user.uid).update({
+      'online': online,
+      'lastSeen': FieldValue.serverTimestamp(),
+    });
   }
 
   // ---------------- MESSAGE ----------------
@@ -388,12 +404,7 @@ class _ChatScreenState extends State<ChatScreen>
                       width: 220,
                       child: glassPanel(
                         child: StreamBuilder<QuerySnapshot>(
-                          stream: usersRef
-                            .where('lastSeen',
-                                isGreaterThan: Timestamp.fromDate(
-                                  DateTime.now().subtract(const Duration(minutes: 10)),
-                                ))
-                            .snapshots(),
+                          stream: usersRef.snapshots(),
                           builder: (_, snap) {
                             if (!snap.hasData) return const SizedBox();
                             return ListView(
@@ -401,30 +412,7 @@ class _ChatScreenState extends State<ChatScreen>
                               children: snap.data!.docs.map((doc) {
                                 final data = doc.data() as Map<String, dynamic>;                                
                                 final bool online = data['online'] == true;
-                                final Timestamp? lastSeenTs = data['lastSeen'] as Timestamp?;
-                                final DateTime now = DateTime.now();
                                 
-                                String statusText;
-
-                                if (online) {
-                                  statusText = "Online";
-                                } else if (lastSeenTs == null) {
-                                  statusText = "Offline";
-                                } else {
-                                  final diff = now.difference(lastSeenTs.toDate());
-
-                                  if (diff.inMinutes < 1) {
-                                    statusText = "Last seen just now";
-                                  } else if (diff.inMinutes < 60) {
-                                    statusText = "Last seen ${diff.inMinutes} min ago";
-                                  } else if (diff.inHours < 24) {
-                                    statusText = "Last seen ${diff.inHours} h ago";
-                                  } else {
-                                    statusText = "Last seen ${diff.inDays} d ago";
-                                  }
-                                }
-
-
                                 return ListTile(
                                   leading: Icon(
                                     Icons.circle,
@@ -435,7 +423,7 @@ class _ChatScreenState extends State<ChatScreen>
                                   ),
                                   title: Text(data['username'], style: sidebarName),
                                   subtitle: Text(
-                                     statusText,
+                                    online ? "Online" : "Offline",
                                     style: sidebarStatus,
                                   ),
                                 );
