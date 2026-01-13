@@ -50,8 +50,8 @@ class _ChatScreenState extends State<ChatScreen> {
   final usersRef = FirebaseFirestore.instance.collection('users');
   final messagesRef = FirebaseFirestore.instance.collection('messages');
 
-  final DatabaseReference presenceRoot =
-      FirebaseDatabase.instance.ref('status');
+  late final FirebaseDatabase _database;
+  late final DatabaseReference presenceRoot;
 
   DatabaseReference? _myStatusRef;
   StreamSubscription? _connectionSub;
@@ -78,9 +78,18 @@ class _ChatScreenState extends State<ChatScreen> {
   @override
   void initState() {
     super.initState();
+
+    _database = FirebaseDatabase.instanceFor(
+      app: Firebase.app(),
+      databaseURL: "https://neon-chat-d6f99-default-rtdb.firebaseio.com",
+    );
+
+    presenceRoot = _database.ref('status');
+
     setupUser();
     setupPresence();
   }
+
 
   @override
   void dispose() {
@@ -138,9 +147,7 @@ class _ChatScreenState extends State<ChatScreen> {
   void setupPresence() {
     final user = FirebaseAuth.instance.currentUser!;
     final uid = user.uid;
-
-    final connectedRef =
-        FirebaseDatabase.instance.ref('.info/connected');
+    final connectedRef = _database.ref('.info/connected');
     _myStatusRef = presenceRoot.child(uid);
 
     _connectionSub?.cancel();
