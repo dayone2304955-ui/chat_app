@@ -79,6 +79,7 @@ class _ChatScreenState extends State<ChatScreen>
 
   bool autoScrollEnabled = true;
   String? username;
+  Timer? _heartbeatTimer;
 
   // ---------------- TEXT STYLES ----------------
 
@@ -129,8 +130,11 @@ class _ChatScreenState extends State<ChatScreen>
 
   @override
   void dispose() {
-    WidgetsBinding.instance.removeObserver(this);
-    _connectionSub?.cancel(); // ✅ ADDED
+    WidgetsBinding.instance.removeObserver(this); // ✅ ADD
+    _heartbeatTimer?.cancel();                    // ✅ ADD
+    _controller.dispose();
+    _focusNode.dispose();
+    _scrollController.dispose();
     super.dispose();
   }
 
@@ -142,7 +146,9 @@ class _ChatScreenState extends State<ChatScreen>
     if (state == AppLifecycleState.paused ||
         state == AppLifecycleState.detached ||
         state == AppLifecycleState.inactive) {
-      // App goes to background → offline
+      // 🔴 App goes to background
+      _heartbeatTimer?.cancel(); // stop heartbeat
+
       await usersRef.doc(user.uid).update({
         'online': false,
         'lastSeen': FieldValue.serverTimestamp(),
@@ -150,11 +156,13 @@ class _ChatScreenState extends State<ChatScreen>
     }
 
     if (state == AppLifecycleState.resumed) {
-      // App comes back → online
+      // 🟢 App comes back
       await usersRef.doc(user.uid).update({
         'online': true,
         'lastSeen': FieldValue.serverTimestamp(),
       });
+
+      setupPresence(); // restart RTDB + heartbeat
     }
   }
 
@@ -200,6 +208,20 @@ class _ChatScreenState extends State<ChatScreen>
         });
       }
     });
+
+    _heartbeatTimer?.cancel();
+    _heartbeatTimer = Timer.periodic(
+      const Duration(seconds: 20),
+      (_) async {
+        final user = FirebaseAuth.instance.currentUser;
+        if (user == null) return;
+
+        await usersRef.doc(user.uid).update({
+          'lastSeen': FieldValue.serverTimestamp(),
+          'online': true,
+        });
+      },
+    );
 
     _statusRef!.onValue.listen((event) async {
       final data = event.snapshot.value as Map?;
