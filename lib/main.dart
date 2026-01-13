@@ -189,41 +189,26 @@ class _ChatScreenState extends State<ChatScreen>
     final connectedRef = _rtdb.ref('.info/connected');
     _statusRef = _rtdb.ref('status/$uid');
 
+    _connectionSub?.cancel();
+
     _connectionSub = connectedRef.onValue.listen((event) async {
       final connected = event.snapshot.value == true;
+      if (!connected) return;
 
-      if (connected) {
-        await _statusRef!.onDisconnect().set({
-          'online': false,
-          'lastSeen': ServerValue.timestamp,
-        });
+      // If app crashes or disconnects
+      await _statusRef!.onDisconnect().set({
+        'online': false,
+        'lastSeen': ServerValue.timestamp,
+      });
 
-        await _statusRef!.set({
-          'online': true,
-          'lastSeen': ServerValue.timestamp,
-        });
-
-        await usersRef.doc(uid).update({
-          'online': true,
-          'lastSeen': FieldValue.serverTimestamp(),
-        });
-      }
+      // Mark online in RTDB
+      await _statusRef!.set({
+        'online': true,
+        'lastSeen': ServerValue.timestamp,
+      });
     });
 
-    _heartbeatTimer?.cancel();
-    _heartbeatTimer = Timer.periodic(
-      const Duration(seconds: 20),
-      (_) async {
-        final user = FirebaseAuth.instance.currentUser;
-        if (user == null) return;
-
-        await usersRef.doc(user.uid).update({
-          'lastSeen': FieldValue.serverTimestamp(),
-          'online': true,
-        });
-      },
-    );
-
+    // 🔁 RTDB → Firestore mirror (single source)
     _statusRef!.onValue.listen((event) async {
       final data = event.snapshot.value as Map?;
       if (data == null) return;
