@@ -141,6 +141,7 @@ class _ChatScreenState extends State<ChatScreen>
   @override
   void didChangeAppLifecycleState(AppLifecycleState state) async {
     final user = FirebaseAuth.instance.currentUser;
+    debugPrint('Lifecycle: $state'); // Debugging
     if (user == null) return;
 
     if (state == AppLifecycleState.paused ||
@@ -425,7 +426,15 @@ class _ChatScreenState extends State<ChatScreen>
                               padding: const EdgeInsets.all(10),
                               children: snap.data!.docs.map((doc) {
                                 final data = doc.data() as Map<String, dynamic>;
-                                final online = data['online'] == true;
+                                
+                                final lastSeen = data['lastSeen'] as Timestamp?;
+                                final now = DateTime.now();
+
+                                bool online = false;
+                                if (lastSeen != null) {
+                                  online = now.difference(lastSeen.toDate()).inMinutes < 1;
+                                }
+                                
                                 return ListTile(
                                   leading: Icon(
                                     Icons.circle,
