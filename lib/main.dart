@@ -17,7 +17,7 @@ void main() async {
       messagingSenderId: "895991678818",
       appId: "1:895991678818:web:ac39a6c099907239d90e3b",
       measurementId: "G-TCW25PPZG7",
-       databaseURL: "https://neon-chat-d6f99-default-rtdb.firebaseio.com",
+      databaseURL: "https://neon-chat-d6f99-default-rtdb.firebaseio.com",
     ),
   );
 
